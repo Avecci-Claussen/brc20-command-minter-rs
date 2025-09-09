@@ -1,0 +1,12 @@
+[package]
+name = "rust-minter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bitcoin = { version = "0.32.7", features = ["std", "rand-std", "base64", "serde", "bitcoinconsensus-std", "bitcoinconsensus"] }
+bitcoincore-rpc = "0.19.0"
+hex = "0.4.3"
+reqwest = { version = "0.12.23", features = ["blocking", "json"] }
+secp256k1 = { version = "0.31.1", features = [] }
+serde = "1.0.219"
