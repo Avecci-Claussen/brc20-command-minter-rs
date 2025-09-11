@@ -66,8 +66,11 @@ A Rust-based server for minting BRC2.0 inscriptions using an EVM wallet as a sig
     --private-key <EVM_PRIVATE_KEY> \
     --value 0x0 \
     --gas-limit 21000 \
+    --gas-price 3wei \
     --legacy
     ```
+
+    Bitcoin miner fee-rate is received from "gas-price" parameter. For 5 sat/vB, send 5 wei as gas price.
 
 ## Modified `eth_` Endpoints
 
