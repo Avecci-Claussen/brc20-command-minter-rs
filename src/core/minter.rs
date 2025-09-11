@@ -1,20 +1,9 @@
 use std::{error::Error, str::FromStr};
 
 use bitcoin::{
-    Address, Amount, CompressedPublicKey, EcdsaSighashType, Network, PrivateKey, ScriptBuf,
-    Sequence, TapSighashType, Transaction, TxIn, TxOut, Witness,
-    absolute::LockTime,
-    consensus::encode,
-    hashes::Hash,
-    key::{
-        Secp256k1, XOnlyPublicKey,
-        rand::{self, Rng},
-    },
-    script::{self, Builder, write_scriptint},
-    secp256k1::{self, PublicKey, SecretKey},
-    sighash::{self, SighashCache},
-    taproot::{self, ControlBlock, LeafVersion},
-    transaction::Version,
+    absolute::LockTime, consensus::encode, hashes::Hash, key::{
+        rand::{self, Rng}, Secp256k1, XOnlyPublicKey
+    }, script::{self, write_scriptint, Builder}, secp256k1::{self, PublicKey, SecretKey}, sighash::{self, SighashCache}, taproot::{self, ControlBlock, LeafVersion}, transaction::Version, Address, Amount, CompressedPublicKey, EcdsaSighashType, Network, PrivateKey, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, TxOut, Witness
 };
 use bitcoincore_rpc::{Auth, Client, RpcApi, jsonrpc::serde_json::Value};
 
@@ -82,7 +71,6 @@ const DUST_VALUE_P2TR: u64 = 330;
 pub struct Minter {
     network: Network,
     mempool_space_url: String,
-    to_spend_fee_rate: f64, // sats per vbyte
     secp: Secp256k1<secp256k1::All>,
     secret_key: SecretKey,
     private_key: PrivateKey,
@@ -97,7 +85,6 @@ pub struct Minter {
 impl Minter {
     pub fn new(
         network: bitcoin::Network,
-        to_spend_fee_rate: f64, // sats per vbyte
         private_key: &str,
         rpc_url: &str,
         rpc_user: &str,
@@ -135,7 +122,6 @@ impl Minter {
         .to_string();
         Minter {
             network,
-            to_spend_fee_rate,
             rpc_client,
             secp,
             secret_key,
@@ -161,19 +147,19 @@ impl Minter {
             .expect("Failed to get fastest fee")
     }
 
-    pub async fn check_fee_rate_warning(&self) {
+    pub async fn check_fee_rate_warning(&self, fee_rate: f64) {
         let fastest_fee = self.get_fastest_fee_rate().await;
-        if self.to_spend_fee_rate < fastest_fee {
+        if fee_rate < fastest_fee {
             tracing::warn!(
-                "The configured to-spend fee rate ({}) is lower than the current fastest fee rate ({}). Transactions may take longer to confirm.",
-                self.to_spend_fee_rate,
+                "The configured fee rate ({}) is lower than the current fastest fee rate ({}). Transactions may take longer to confirm.",
+                fee_rate,
                 fastest_fee
             );
         }
-        if self.to_spend_fee_rate > fastest_fee * 3.0 {
+        if fee_rate > fastest_fee * 3.0 {
             tracing::warn!(
-                "The configured to-spend fee rate ({}) is significantly higher than the current fastest fee rate ({}). You may be overpaying for transaction fees.",
-                self.to_spend_fee_rate,
+                "The configured fee rate ({}) is significantly higher than the current fastest fee rate ({}). You may be overpaying for transaction fees.",
+                fee_rate,
                 fastest_fee
             );
         }
@@ -191,10 +177,10 @@ impl Minter {
         balance.to_sat()
     }
 
-    pub fn calculate_fee(&self, inputs: &Vec<Utxo>, outputs: &Vec<(ScriptBuf, Amount)>) -> u64 {
+    pub fn calculate_fee(&self, inputs: &Vec<Utxo>, outputs: &Vec<(ScriptBuf, Amount)>, fee_rate: f64) -> u64 {
         let tx = construct_dummy_tx_from_in_outs(inputs, outputs);
         let vsize = tx.weight().to_vbytes_ceil() as f64;
-        (vsize * self.to_spend_fee_rate).ceil() as u64
+        (vsize * fee_rate).ceil() as u64
     }
 
     pub fn build_transaction(
@@ -202,6 +188,7 @@ impl Minter {
         utxos: &Vec<Utxo>,
         force_in_utxos: &Vec<Utxo>,
         outputs: &Vec<(ScriptBuf, Amount)>,
+        fee_rate: f64,
     ) -> Result<Transaction, Box<dyn Error>> {
         let mut utxos = utxos.clone();
         // sort utxos by value ascending
@@ -220,7 +207,7 @@ impl Minter {
         }
         let mut total_input_value: u64 = inputs.iter().map(|u| u.value.to_sat()).sum();
         let total_target_value: u64 = outputs.iter().map(|(_, v)| v.to_sat()).sum();
-        let mut fee = self.calculate_fee(&inputs, &outputs);
+        let mut fee = self.calculate_fee(&inputs, &outputs, fee_rate);
         while total_input_value < total_target_value + fee {
             tracing::debug!(
                 "Total input value: {}, total target value + fee: {} + {} = {}, remaining utxo cnt: {}",
@@ -236,10 +223,10 @@ impl Minter {
             let last_utxo = utxos.pop().expect("No more UTXOs");
             total_input_value += last_utxo.value.to_sat();
             inputs.push(last_utxo.clone());
-            fee = self.calculate_fee(&inputs, &outputs);
+            fee = self.calculate_fee(&inputs, &outputs, fee_rate);
         }
         let additional_change_output_fee =
-            f64::ceil(((self.sender.script_pubkey().len() + 9) as f64) * self.to_spend_fee_rate)
+            f64::ceil(((self.sender.script_pubkey().len() + 9) as f64) * fee_rate)
                 as u64;
         let excess = total_input_value - fee - total_target_value;
         if excess > self.dust_value + additional_change_output_fee {
@@ -257,6 +244,7 @@ impl Minter {
         inscription_details: &Vec<InscriptionDetails>,
         postage: u64,
         utxos: &Vec<Utxo>,
+        fee_rate: f64,
     ) -> Result<Transaction, Box<dyn Error>> {
         let secp = bitcoin::secp256k1::Secp256k1::new();
         let taproot_secret_key = SecretKey::from_str(secret).expect("Invalid secret");
@@ -301,7 +289,7 @@ impl Minter {
             output: dummy_reveal_outputs,
         };
         let dummy_reveal_tx_fee =
-            f64::ceil((dummy_reveal_tx.weight().to_vbytes_ceil() as f64) * self.to_spend_fee_rate)
+            f64::ceil((dummy_reveal_tx.weight().to_vbytes_ceil() as f64) * fee_rate)
                 as u64;
         let total_postage = postage * (inscription_details.len() as u64);
         let total_needed = total_postage + dummy_reveal_tx_fee;
@@ -312,6 +300,7 @@ impl Minter {
                 taproot_address.script_pubkey(),
                 Amount::from_sat(total_needed),
             )],
+            fee_rate,
         )
     }
 
@@ -405,6 +394,7 @@ impl Minter {
         command: &str,
         utxos: &Vec<Utxo>,
         secret: &str,
+        fee_rate: f64,
     ) -> Result<MintTransactions, Box<dyn Error>> {
         let inscription_details = vec![InscriptionDetails {
             mime_type: b"text/plain".to_vec(),
@@ -414,11 +404,11 @@ impl Minter {
             delegate: None,
             file_data: command.as_bytes().to_vec(),
         }];
-        let mut postage = f64::ceil(100.0 * self.to_spend_fee_rate + 1.0) as u64; // sats per inscription
+        let mut postage = f64::ceil(100.0 * fee_rate + 1.0) as u64; // sats per inscription
         if postage < 330 {
             postage = 330; // minimum for p2tr output
         }
-        let mut commit_tx = self.build_commit_tx(secret, &inscription_details, postage, &utxos)?;
+        let mut commit_tx = self.build_commit_tx(secret, &inscription_details, postage, &utxos, fee_rate)?;
         let sighash_type = EcdsaSighashType::All;
         let in_cnt = commit_tx.input.len();
         let mut utxos_to_spend: Vec<Utxo> = Vec::new();
@@ -597,17 +587,17 @@ impl Minter {
         let utxos = self.get_dummy_utxos();
         let secret = get_secret();
 
-        let mint_txes = self.construct_mint_txes(&command, &utxos, &secret)?;
+        let mint_txes = self.construct_mint_txes(&command, &utxos, &secret, 1.0)?;
 
         Ok(mint_txes.total_fee)
     }
 
-    pub async fn mint(&self, command: &str) -> Result<MintResult, Box<dyn Error>> {
+    pub async fn mint(&self, command: &str, fee_rate: f64) -> Result<MintResult, Box<dyn Error>> {
         tracing::info!("Starting minting process...");
         let utxos = self.get_utxos().await;
         let secret = get_secret();
 
-        let mint_txes = self.construct_mint_txes(&command, &utxos, &secret)?;
+        let mint_txes = self.construct_mint_txes(&command, &utxos, &secret, fee_rate)?;
 
         // test commit
         let test_res = self.test_mempool_accept(&[&mint_txes.commit.clone()].to_vec());

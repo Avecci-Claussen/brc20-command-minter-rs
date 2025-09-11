@@ -50,7 +50,6 @@ impl ServerState {
         // Initialize the server here
         let minter = Minter::new(
             config.bitcoin_network.clone(),
-            config.to_spend_fee_rate,
             &config.secret,
             &config.bitcoin_rpc_url,
             &config.bitcoin_rpc_user,
@@ -193,11 +192,12 @@ impl ServerState {
             .into());
         }
 
-        self.minter.check_fee_rate_warning().await;
+        let fee_rate = tx.gas_price as f64; // in sat/vB
+        self.minter.check_fee_rate_warning(fee_rate).await;
 
         // Convert the signed Ethereum transaction to a BRC20 inscription
         let inscription = convert_to_brc20_inscription(&signed_eth_tx, tx.gas_limit);
-        let mint_result = match self.minter.mint(&inscription).await {
+        let mint_result = match self.minter.mint(&inscription, fee_rate).await {
             Ok(res) => res,
             Err(err) => return Err(format!("Failed to mint BRC20 inscription: {}", err).into()),
         };
