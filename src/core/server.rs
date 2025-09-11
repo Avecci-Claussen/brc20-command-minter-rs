@@ -91,11 +91,6 @@ impl ServerState {
     }
 
     async fn get_nonce(&self, address: Address) -> Result<u64, Box<dyn Error>> {
-        let database_nonce = self
-            .database
-            .get_transaction_count(&address.to_string())
-            .await as u64;
-
         let brc20_nonce: u64 = match self
             .brc20_client
             .eth_get_transaction_count(address.into(), "latest".to_string())
@@ -112,6 +107,11 @@ impl ServerState {
                 return Err("Failed to get nonce from BRC2.0 client".into());
             }
         };
+
+        let database_nonce = self
+            .database
+            .get_transaction_count(&address.to_string(), brc20_nonce)
+            .await as u64;
 
         Ok(std::cmp::max(database_nonce, brc20_nonce))
     }

@@ -81,13 +81,30 @@ impl TxDatabase {
         .expect("Failed to insert transaction");
     }
 
-    pub async fn get_transaction_count(&self, eth_sender: &str) -> i64 {
+    pub async fn get_transaction_count(&self, eth_sender: &str, brc20_nonce: u64) -> i64 {
         let row: (Option<i64>,) = sqlx::query_as(
             r#"
-            SELECT MAX(nonce) FROM transactions WHERE eth_sender = ?;
+            WITH AllNonces (nonce) AS (
+                SELECT nonce FROM transactions WHERE eth_sender = ?
+                UNION
+                SELECT ? AS nonce
+            )
+            SELECT
+                t1.nonce + 1 AS first_missing_nonce
+            FROM
+                AllNonces AS t1
+            LEFT JOIN
+                AllNonces AS t2 ON t1.nonce + 1 = t2.nonce
+            WHERE
+                t2.nonce IS NULL AND t1.nonce >= ?
+            ORDER BY
+                t1.nonce
+            LIMIT 1;
             "#,
         )
         .bind(eth_sender.to_ascii_lowercase())
+        .bind((brc20_nonce as i64) - 1)
+        .bind((brc20_nonce as i64) - 1)
         .fetch_one(&self.db)
         .await
         .expect("Failed to fetch nonce");
