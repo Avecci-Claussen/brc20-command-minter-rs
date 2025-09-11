@@ -4,10 +4,10 @@ A Rust-based server for minting BRC2.0 inscriptions using an EVM wallet as a sig
 
 ## Features
 
-- **Bitcoin Wallet Integration**: Uses a Bitcoin wallet to fund and inscribe transactions.
+- **Bitcoin Wallet Integration**: Uses a Bitcoin wallet to fund transactions and inscribe them.
 - **EVM Wallet Integration**: EVM interface using `eth_sendRawTransaction` to send pre-signed transactions.
 - **Transaction Fee Management**: Automatically estimates and manages transaction fees.
-- **Nonce Management**: Tracks and manages nonces for transactions, see caveats.
+- **Nonce Management**: Tracks and manages nonces for transactions, see caveats below.
 - **Database Support**: Uses SQLite for storing previous transaction data and nonces.
 - **EVM Address Configuration**: Specify the EVM address to be used for signing transactions to protect against unauthorized use.
 - **Proxy BRC2.0 Server**: Routes unhandled requests to a specified BRC2.0 server for gas estimation and block, transaction data.
@@ -41,12 +41,12 @@ A Rust-based server for minting BRC2.0 inscriptions using an EVM wallet as a sig
 
 3. **Run the Server**:
 
-    Optionally, you can set the `RUST_LOG` environment variable (e.g. `info`, `debug`, `trace`) to enable logging:
+    You can optionally set the `RUST_LOG` environment variable (e.g. `info`, `debug`, `trace`) to enable logging:
 
     ```bash
     cargo run --release
     ```
-    or run the compiled binary directly:
+    or run the compiled binary:
 
     ```bash
     ./target/release/brc20-command-minter-rs
@@ -70,11 +70,11 @@ A Rust-based server for minting BRC2.0 inscriptions using an EVM wallet as a sig
 
 - `eth_getBalance`: Returns the balance of the Bitcoin Wallet in satoshis for easy integration.
 
-- `eth_estimateGas`: Estimates the total sats required for a transaction by calculating the necessary Bitcoin fee. This won't return the actual gas usage, but the estimated fee, so you can fund the Bitcoin wallet before sending the transaction.
+- `eth_estimateGas`: Estimates the total sats required for a transaction by calculating the required Bitcoin fee. This returns the estimated fee, not the actual gas usage, so you can fund the Bitcoin wallet before sending the transaction.
 
 - `eth_getTransactionCount`: Returns the nonce for the specified EVM address, including pending transactions stored in the database.
 
-- `eth_sendRawTransaction`: Accepts a pre-signed transaction, funds it with Bitcoin, and inscribes it as a BRC2.0 transaction. Setting the gas limit in the transaction to a high value will increase the size of the inscription and the total fee, so set it appropriately after estimating the gas using the proxied BRC2.0 server, or use a reasonable default.
+- `eth_sendRawTransaction`: Accepts a pre-signed transaction, funds it with Bitcoin, and inscribes it as a BRC2.0 transaction. If you set a high gas limit, the inscription size and total fee will increase, so estimate gas via the proxied BRC2.0 server, or choose a reasonable default.
 
 - `eth_accounts`: Returns an empty array to avoid confusion, as this server does not manage EVM accounts.
 
@@ -83,7 +83,7 @@ All other methods are proxied to the specified BRC2.0 server.
 ## Caveats
 
 - **eth_estimateGas returns a BTC value**: This method estimates the total satoshis required for the transaction based on `TO_SPEND_FEE_RATE` and the size of the transaction. It does not return the actual gas used by the EVM transaction, so you should use the underlying BRC2.0 server to get gas estimates and/or set a reasonable gas limit in your transaction accordingly. Otherwise, the transaction may fail due to insufficient gas. <u>BRC2.0 allows 12000 gas per 1 byte of inscription data.</u>
-- **eth_sendTransaction is not supported**: This method is not supported. Only `eth_sendRawTransaction` is implemented, as this server does not intended for signing transactions, you should pre-sign your transactions using another wallet. `eth_accounts` will return an empty array to avoid confusion.
-- **Nonce Management might not work with multiple instances**: The server tracks nonces in a SQLite database. If multiple instances of the server are running with the same EVM address, nonce conflicts may occur. Ensure only one instance is managing a specific EVM address.
-- **Transaction Fees are constant, and they should be monitored and changed if necessary**: The server estimates transaction fees based on the `TO_SPEND_FEE_RATE` environment variable. Ensure this value is appropriate for the current network conditions.
-- **Security!**: Always ensure that your Bitcoin and EVM wallets are secure, as they are critical to the operation of this server.
+- **eth_sendTransaction is not supported**: This method is not supported. Only `eth_sendRawTransaction` is implemented, as this server is not intended for signing transactions, you should pre-sign your transactions using another wallet. `eth_accounts` will return an empty array to avoid confusion.
+- **Nonce management may not work with multiple instances**: The server tracks nonces in a SQLite database. If multiple instances of the server are running with the same EVM address, nonce conflicts may occur. Ensure only one instance is managing a specific EVM address.
+- **Transaction fees are constant and should be monitored/adjusted as needed**: The server estimates transaction fees based on the `TO_SPEND_FEE_RATE` environment variable. Ensure this value is appropriate for the current network conditions.
+- **Security!**: Always keep your Bitcoin and EVM wallets secure, they are critical to this server’s operation.
