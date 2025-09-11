@@ -115,6 +115,6 @@ impl TxDatabase {
                 panic!("Nonce in database is negative");
             }
         }
-        row.0.map_or(0, |n| n + 1) // Start from nonce 0 if no transactions found
+        row.0.map_or(0, |n| n) // Start from nonce 0 if no transactions found
     }
 }
