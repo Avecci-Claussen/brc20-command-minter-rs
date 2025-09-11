@@ -72,6 +72,10 @@ A Rust-based server for minting BRC2.0 inscriptions using an EVM wallet as a sig
 
     Bitcoin miner fee-rate is received from "gas-price" parameter. For 5 sat/vB, send 5 wei as gas price.
 
+    If gas-price is set to `0`, it'll use the configured mempool fee rate.
+    
+    If gas price is > `10 * mempool_rate` tx is rejected.
+
 ## Modified `eth_` Endpoints
 
 - `eth_getBalance`: Returns the balance of the Bitcoin Wallet in satoshis for easy integration.

@@ -193,8 +193,18 @@ impl ServerState {
             .into());
         }
 
-        let fee_rate = tx.gas_price as f64; // in sat/vB
-        self.minter.check_fee_rate_warning(fee_rate).await;
+        let mut fee_rate = tx.gas_price as f64; // in sat/vB
+        if fee_rate < 1.0 {
+            fee_rate = self.minter.get_mempool_fee_rate().await;
+            tracing::warn!(
+                "The provided gas price is too low ({} wei). Using current mempool fee rate of {} sat/vB instead.",
+                tx.gas_price,
+                fee_rate
+            );
+        }
+        if !self.minter.check_fee_rate_warning(fee_rate).await {
+            return Err("Transaction aborted due to fee rate too high error. Please adjust the gas price.".into());
+        }
 
         // Convert the signed Ethereum transaction to a BRC20 inscription
         let inscription = convert_to_brc20_inscription(&signed_eth_tx, tx.gas_limit);

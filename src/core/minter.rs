@@ -152,7 +152,7 @@ impl Minter {
             .expect("Failed to get fee rate")
     }
 
-    pub async fn check_fee_rate_warning(&self, fee_rate: f64) {
+    pub async fn check_fee_rate_warning(&self, fee_rate: f64) -> bool {
         let mempool_fee = self.get_mempool_fee_rate().await;
         if fee_rate < mempool_fee {
             tracing::warn!(
@@ -161,13 +161,15 @@ impl Minter {
                 mempool_fee
             );
         }
-        if fee_rate > mempool_fee * 3.0 {
+        if fee_rate > mempool_fee * 10.0 {
             tracing::warn!(
                 "The configured fee rate ({}) is significantly higher than the current mempool fee rate ({}). You may be overpaying for transaction fees.",
                 fee_rate,
                 mempool_fee
             );
+            return false;
         }
+        true
     }
 
     pub async fn get_balance(&self) -> u64 {
