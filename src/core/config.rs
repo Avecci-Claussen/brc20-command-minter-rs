@@ -10,6 +10,28 @@ static PROXY_SERVER_ADDRESS_KEY: &str = "PROXY_SERVER_ADDRESS";
 static EVM_ADDRESS_KEY: &str = "EVM_ADDRESS";
 static DB_URL_KEY: &str = "DATABASE_URL";
 static DB_URL_DEFAULT: &str = "sqlite://brc20_minter.db";
+static FEE_RATE_CATEGORY_KEY: &str = "FEE_RATE_CATEGORY";
+static FEE_RATE_CATEGORY_DEFAULT: &str = "fastest";
+
+#[derive(Debug, Clone, Copy)]
+pub enum FeeRateCategory {
+    Fastest,
+    HalfHour,
+    Hour,
+    Economy,
+    Minimum,
+}
+impl ToString for FeeRateCategory {
+    fn to_string(&self) -> String {
+        match self {
+            FeeRateCategory::Fastest => "fastestFee".to_string(),
+            FeeRateCategory::HalfHour => "halfHourFee".to_string(),
+            FeeRateCategory::Hour => "hourFee".to_string(),
+            FeeRateCategory::Economy => "economyFee".to_string(),
+            FeeRateCategory::Minimum => "minimumFee".to_string(),
+        }
+    }
+}
 
 pub struct Config {
     pub evm_address: String,          // EVM address for Ethereum-based operations
@@ -21,6 +43,7 @@ pub struct Config {
     pub bitcoin_network: Network,     // Bitcoin network (e.g., Bitcoin::Network::Testnet)
     pub proxy_server_address: String, // Optional address of the proxy server
     pub db_url: String,               // Database connection URL
+    pub fee_rate_category: FeeRateCategory, // Fee rate category for mempool.space API
 }
 
 impl Default for Config {
@@ -39,6 +62,17 @@ impl Default for Config {
             std::env::var(BITCOIN_NETWORK_KEY).expect("BITCOIN_NETWORK must be set");
         let evm_address = std::env::var(EVM_ADDRESS_KEY).expect("EVM_ADDRESS must be set");
         let db_url = std::env::var(DB_URL_KEY).unwrap_or_else(|_| DB_URL_DEFAULT.to_string());
+        let fee_rate_category = match std::env::var(FEE_RATE_CATEGORY_KEY)
+            .unwrap_or_else(|_| FEE_RATE_CATEGORY_DEFAULT.to_string())
+            .as_str()
+        {
+            "fastest" => FeeRateCategory::Fastest,
+            "halfHour" => FeeRateCategory::HalfHour,
+            "hour" => FeeRateCategory::Hour,
+            "economy" => FeeRateCategory::Economy,
+            "minimum" => FeeRateCategory::Minimum,
+            other => panic!("Invalid FEE_RATE_CATEGORY value: {}", other),
+        };
         Self {
             brc20_rpc_url,
             evm_address,
@@ -51,6 +85,7 @@ impl Default for Config {
                 .expect("BITCOIN_NETWORK must be a valid Bitcoin network"),
             proxy_server_address,
             db_url,
+            fee_rate_category,
         }
     }
 }

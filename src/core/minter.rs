@@ -7,6 +7,8 @@ use bitcoin::{
 };
 use bitcoincore_rpc::{Auth, Client, RpcApi, jsonrpc::serde_json::Value};
 
+use crate::core::config::FeeRateCategory;
+
 #[derive(Clone)]
 pub struct Utxo {
     pub txid: bitcoin::Txid,
@@ -80,6 +82,7 @@ pub struct Minter {
     pub sender: Address,
     rpc_client: Client,
     dust_value: u64,
+    fee_rate_category: FeeRateCategory,
 }
 
 impl Minter {
@@ -89,6 +92,7 @@ impl Minter {
         rpc_url: &str,
         rpc_user: &str,
         rpc_password: &str,
+        fee_rate_category: &FeeRateCategory,
     ) -> Self {
         let secp = bitcoin::secp256k1::Secp256k1::new();
         let secret_key = SecretKey::from_str(private_key).expect("Invalid secret key");
@@ -132,35 +136,36 @@ impl Minter {
             sender,
             dust_value,
             mempool_space_url,
+            fee_rate_category: fee_rate_category.clone(),
         }
     }
 
-    pub async fn get_fastest_fee_rate(&self) -> f64 {
+    pub async fn get_mempool_fee_rate(&self) -> f64 {
         let url = format!("{}/api/v1/fees/recommended", self.mempool_space_url);
         let resp = reqwest::get(&url).await.expect("Failed to fetch fee rate");
         if !resp.status().is_success() {
             panic!("Failed to fetch fee rate: {}", resp.status());
         }
         let fee_data: serde_json::Value = resp.json().await.expect("Failed to parse fee rate");
-        fee_data["fastestFee"]
+        fee_data[self.fee_rate_category.to_string()]
             .as_f64()
-            .expect("Failed to get fastest fee")
+            .expect("Failed to get fee rate")
     }
 
     pub async fn check_fee_rate_warning(&self, fee_rate: f64) {
-        let fastest_fee = self.get_fastest_fee_rate().await;
-        if fee_rate < fastest_fee {
+        let mempool_fee = self.get_mempool_fee_rate().await;
+        if fee_rate < mempool_fee {
             tracing::warn!(
-                "The configured fee rate ({}) is lower than the current fastest fee rate ({}). Transactions may take longer to confirm.",
+                "The configured fee rate ({}) is lower than the current mempool fee rate ({}). Transactions may take longer to confirm.",
                 fee_rate,
-                fastest_fee
+                mempool_fee
             );
         }
-        if fee_rate > fastest_fee * 3.0 {
+        if fee_rate > mempool_fee * 3.0 {
             tracing::warn!(
-                "The configured fee rate ({}) is significantly higher than the current fastest fee rate ({}). You may be overpaying for transaction fees.",
+                "The configured fee rate ({}) is significantly higher than the current mempool fee rate ({}). You may be overpaying for transaction fees.",
                 fee_rate,
-                fastest_fee
+                mempool_fee
             );
         }
     }

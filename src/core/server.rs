@@ -15,7 +15,7 @@ use axum::{
     response::Response,
     routing::post,
 };
-use bitcoin::hex::DisplayHex;
+use bitcoin::{hex::DisplayHex};
 use brc20_prog::{
     Brc20ProgApiClient,
     types::{EthCall, U64ED},
@@ -54,6 +54,7 @@ impl ServerState {
             &config.bitcoin_rpc_url,
             &config.bitcoin_rpc_user,
             &config.bitcoin_rpc_password,
+            &config.fee_rate_category,
         );
         let brc20_client = HttpClient::builder()
             .build(config.brc20_rpc_url.as_str())
@@ -221,6 +222,16 @@ impl ServerState {
 
     async fn get_balance(&self) -> Result<u64, StatusCode> {
         Ok(self.minter.get_balance().await)
+    }
+
+    async fn get_fee_rate(&self) -> Result<u64, Box<dyn Error>> {
+        let fee_rate = self.minter.get_mempool_fee_rate().await;
+        let fee_rate_rounded = fee_rate.round() as u64;
+        if fee_rate_rounded == 0 {
+            Ok(1)
+        } else {
+            Ok(fee_rate_rounded)
+        }
     }
 }
 
@@ -425,6 +436,14 @@ async fn handle_single_request(
         "eth_accounts" => {
             // Return empty array to disable account management in clients
             return wrap_json_rpc(serde_json::json!([]), id);
+        }
+        "eth_gasPrice" => {
+            return match server.lock().await.get_fee_rate().await {
+                Ok(fee_rate) => wrap_json_rpc(serde_json::json!(U64ED::from(fee_rate)), id),
+                Err(err) => {
+                    wrap_json_rpc_error(-32000, format!("Failed to get fee rate: {}", err), id)
+                }
+            };
         }
         _ => {}
     }

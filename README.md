@@ -35,9 +35,12 @@ A Rust-based server for minting BRC2.0 inscriptions using an EVM wallet as a sig
     - `BITCOIN_RPC_USER`: The RPC username for your Bitcoin node.
     - `BITCOIN_RPC_PASSWORD`: The RPC password for your Bitcoin node.
     - `BITCOIN_NETWORK`: The Bitcoin network to use (e.g., `bitcoin`, `testnet`, `signet`).
-    - `TO_SPEND_FEE_RATE`: The fee rate (in sat/vB) to use when funding transactions.
+    - `FEE_RATE_CATEGORY`: The fee rate category for mempool.space API. Allowed values are `fastest`, `halfHour`, `hour`, `economy`, `minimum`.
     - `PROXY_SERVER_ADDRESS`: The address and port for the server to listen on.
     - `DB_PATH`: (Optional) Path to the SQLite database file. Defaults to `brc20_minter.db`.
+
+> [!CAUTION]
+> **UTXO management is not inscription aware**: The server may burn the inscriptions that you've sent to the bitcoin wallet. Also those inscriptions may prevent the inscribed commands to run since re-inscriptions are not allowed on BRC20. Always use a fresh wallet with no inscriptions.
 
 3. **Run the Server**:
 
@@ -78,12 +81,13 @@ A Rust-based server for minting BRC2.0 inscriptions using an EVM wallet as a sig
 
 - `eth_accounts`: Returns an empty array to avoid confusion, as this server does not manage EVM accounts.
 
+- `eth_gasPrice`: Returns the current fee rate of Bitcoin Network. Uses mempool.space API. Fee rate category can be configured via `FEE_RATE_CATEGORY`.
+
 All other methods are proxied to the specified BRC2.0 server.
 
 ## Caveats
 
-- **eth_estimateGas returns a BTC value**: This method estimates the total satoshis required for the transaction based on `TO_SPEND_FEE_RATE` and the size of the transaction. It does not return the actual gas used by the EVM transaction, so you should use the underlying BRC2.0 server to get gas estimates and/or set a reasonable gas limit in your transaction accordingly. Otherwise, the transaction may fail due to insufficient gas. <u>BRC2.0 allows 12000 gas per 1 byte of inscription data.</u>
+- **eth_estimateGas returns a BTC value**: This method estimates the total satoshis required for the transaction based on the size of the transaction, it assumes 1.0 sat/vB fee rate. It does not return the actual gas used by the EVM transaction, so you should use the underlying BRC2.0 server to get gas estimates and/or set a reasonable gas limit in your transaction accordingly. Otherwise, the transaction may fail due to insufficient gas. <u>BRC2.0 allows 12000 gas per 1 byte of inscription data.</u>
 - **eth_sendTransaction is not supported**: This method is not supported. Only `eth_sendRawTransaction` is implemented, as this server is not intended for signing transactions, you should pre-sign your transactions using another wallet. `eth_accounts` will return an empty array to avoid confusion.
 - **Nonce management may not work with multiple instances**: The server tracks nonces in a SQLite database. If multiple instances of the server are running with the same EVM address, nonce conflicts may occur. Ensure only one instance is managing a specific EVM address.
-- **Transaction fees are constant and should be monitored/adjusted as needed**: The server estimates transaction fees based on the `TO_SPEND_FEE_RATE` environment variable. Ensure this value is appropriate for the current network conditions.
 - **Security!**: Always keep your Bitcoin and EVM wallets secure, they are critical to this server’s operation.
