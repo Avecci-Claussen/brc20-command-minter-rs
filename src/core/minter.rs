@@ -1,4 +1,4 @@
-use std::{error::Error, str::FromStr};
+use std::{error::Error, str::FromStr, time::Duration};
 
 use bitcoin::{
     absolute::LockTime, consensus::encode, hashes::Hash, key::{
@@ -70,6 +70,9 @@ const DUST_VALUE_P2WPKH: u64 = 294;
 const DUST_VALUE_P2SH: u64 = 540;
 const DUST_VALUE_P2TR: u64 = 330;
 
+const MAX_ATTEMPTS: i32 = 5;
+const DELAY_DURATION: Duration = Duration::from_secs(2);
+
 pub struct Minter {
     network: Network,
     mempool_space_url: String,
@@ -140,16 +143,34 @@ impl Minter {
         }
     }
 
-    pub async fn get_mempool_fee_rate(&self) -> f64 {
+    async fn get_mempool_fee_rate_single_run(&self) -> Result<f64, Box<dyn Error>> {
         let url = format!("{}/api/v1/fees/recommended", self.mempool_space_url);
-        let resp = reqwest::get(&url).await.expect("Failed to fetch fee rate");
+        let resp = reqwest::get(&url).await?;
         if !resp.status().is_success() {
-            panic!("Failed to fetch fee rate: {}", resp.status());
+            return Err(format!("Failed to fetch fee rate: {}", resp.status()).into());
         }
-        let fee_data: serde_json::Value = resp.json().await.expect("Failed to parse fee rate");
+        let fee_data: serde_json::Value = resp.json().await?;
         fee_data[self.fee_rate_category.to_string()]
             .as_f64()
-            .expect("Failed to get fee rate")
+            .ok_or_else(|| format!("Failed to get fee rate").into())
+    }
+    pub async fn get_mempool_fee_rate(&self) -> f64 {
+        for attempt in 0..MAX_ATTEMPTS {
+            match self.get_mempool_fee_rate_single_run().await {
+                Ok(fee_rate) => return fee_rate,
+                Err(e) => {
+                    tracing::warn!(
+                        "Attempt {}/{}: Failed to fetch mempool fee rate: {}. Retrying in {} seconds...",
+                        attempt + 1,
+                        MAX_ATTEMPTS,
+                        e,
+                        DELAY_DURATION.as_secs()
+                    );
+                }
+            }
+            tokio::time::sleep(DELAY_DURATION).await;
+        }
+        panic!("Failed to fetch mempool fee rate after {} attempts", MAX_ATTEMPTS);
     }
 
     pub async fn check_fee_rate_warning(&self, fee_rate: f64) -> bool {
@@ -512,21 +533,21 @@ impl Minter {
         })
     }
 
-    pub async fn get_utxos(&self) -> Vec<Utxo> {
+    pub async fn get_utxos_single_run(&self) -> Result<Vec<Utxo>, Box<dyn Error>> {
         // use mempool.space API to get UTXOs for the address
         let url = format!(
             "{}/api/address/{}/utxo",
             self.mempool_space_url, self.sender
         );
-        let resp = reqwest::get(&url).await.expect("Failed to fetch UTXOs");
+        let resp = reqwest::get(&url).await?;
         if !resp.status().is_success() {
-            panic!("Failed to fetch UTXOs: {}", resp.status());
+            return Err(format!("Failed to fetch UTXOs: {}", resp.status()).into());
         }
         let mempool_space_utxos: Vec<MempoolSpaceUtxo> =
-            resp.json().await.expect("Failed to parse UTXOs");
+            resp.json().await?;
         let mut utxos: Vec<Utxo> = Vec::new();
         for ms_utxo in mempool_space_utxos {
-            let txid = bitcoin::Txid::from_str(&ms_utxo.txid).expect("Invalid txid");
+            let txid = bitcoin::Txid::from_str(&ms_utxo.txid)?;
             utxos.push(Utxo {
                 txid,
                 vout: ms_utxo.vout,
@@ -537,7 +558,25 @@ impl Minter {
                 tap_leaf_control_block: None,
             });
         }
-        utxos
+        Ok(utxos)
+    }
+    pub async fn get_utxos(&self) -> Vec<Utxo> {
+        for attempt in 0..MAX_ATTEMPTS {
+            match self.get_utxos_single_run().await {
+                Ok(utxos) => return utxos,
+                Err(e) => {
+                    tracing::warn!(
+                        "Attempt {}/{}: Failed to fetch UTXOs: {}. Retrying in {} seconds...",
+                        attempt + 1,
+                        MAX_ATTEMPTS,
+                        e,
+                        DELAY_DURATION.as_secs()
+                    );
+                }
+            }
+            tokio::time::sleep(DELAY_DURATION).await;
+        }
+        panic!("Failed to fetch UTXOs after {} attempts", MAX_ATTEMPTS);
     }
 
     pub fn test_mempool_accept(&self, txes: &Vec<&Transaction>) -> bool {
