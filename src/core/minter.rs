@@ -481,7 +481,7 @@ impl Minter {
         for output in commit_tx.output.iter() {
             commit_tx_out_value += output.value.to_sat();
         }
-        let total_fee = commit_tx_in_value - commit_tx_out_value + postage;
+        let total_fee = commit_tx_in_value - commit_tx_out_value + commit_tx.output[0].value.to_sat();
         let reveal_tx = self.build_reveal_tx(secret, &commit_tx, &inscription_details, postage);
         let send_to_op_return_inputs = vec![TxIn {
             previous_output: bitcoin::OutPoint {
