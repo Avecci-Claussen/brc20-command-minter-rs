@@ -64,9 +64,10 @@ A Rust-based server for minting BRC2.0 inscriptions using an EVM wallet as a sig
     "transfer(address,uint256)" <TO_ADDRESS> <AMOUNT> \
     --rpc-url <RPC_URL> \
     --private-key <EVM_PRIVATE_KEY> \
-    --value 0x0 \
+    --value 0 \
     --gas-limit 21000 \
     --gas-price 3wei \
+    --async \
     --legacy
     ```
 
