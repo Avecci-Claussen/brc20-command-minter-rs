@@ -15,12 +15,12 @@ use axum::{
     response::Response,
     routing::post,
 };
-use bitcoin::{hex::DisplayHex};
+use bitcoin::hex::DisplayHex;
 use brc20_prog::{
     Brc20ProgApiClient,
     types::{EthCall, U64ED},
 };
-use http::HeaderMap;
+use http::{HeaderMap, HeaderValue};
 use jsonrpsee::http_client::HttpClient;
 use reqwest::Client;
 use tokio::sync::Mutex;
@@ -203,7 +203,10 @@ impl ServerState {
             );
         }
         if !self.minter.check_fee_rate_warning(fee_rate).await {
-            return Err("Transaction aborted due to fee rate too high error. Please adjust the gas price.".into());
+            return Err(
+                "Transaction aborted due to fee rate too high error. Please adjust the gas price."
+                    .into(),
+            );
         }
 
         // Convert the signed Ethereum transaction to a BRC20 inscription
@@ -461,7 +464,7 @@ async fn handle_single_request(
     let brc20_response = CLIENT
         .post(&brc20_rpc_url)
         .body(serde_json::to_vec(request).unwrap())
-        .headers(headers.clone())
+        .headers(drop_accept_encoding(headers))
         .send()
         .await;
 
@@ -479,4 +482,14 @@ async fn handle_single_request(
             id,
         ),
     }
+}
+
+fn drop_accept_encoding(mut headers: HeaderMap) -> HeaderMap {
+    // remove accept-encoding header in case insensitively
+    let remove_keys = vec!["accept-encoding", "host"];
+    for key in remove_keys {
+        headers.remove(key);
+    }
+    headers.append("Accept-Encoding", HeaderValue::from_static("identity"));
+    headers
 }

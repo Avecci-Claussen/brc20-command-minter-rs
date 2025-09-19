@@ -1,9 +1,20 @@
 use std::{error::Error, str::FromStr, time::Duration};
 
 use bitcoin::{
-    absolute::LockTime, consensus::encode, hashes::Hash, key::{
-        rand::{self, Rng}, Secp256k1, XOnlyPublicKey
-    }, script::{self, write_scriptint, Builder}, secp256k1::{self, PublicKey, SecretKey}, sighash::{self, SighashCache}, taproot::{self, ControlBlock, LeafVersion}, transaction::Version, Address, Amount, CompressedPublicKey, EcdsaSighashType, Network, PrivateKey, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, TxOut, Witness
+    Address, Amount, CompressedPublicKey, EcdsaSighashType, Network, PrivateKey, ScriptBuf,
+    Sequence, TapSighashType, Transaction, TxIn, TxOut, Witness,
+    absolute::LockTime,
+    consensus::encode,
+    hashes::Hash,
+    key::{
+        Secp256k1, XOnlyPublicKey,
+        rand::{self, Rng},
+    },
+    script::{self, Builder, write_scriptint},
+    secp256k1::{self, PublicKey, SecretKey},
+    sighash::{self, SighashCache},
+    taproot::{self, ControlBlock, LeafVersion},
+    transaction::Version,
 };
 use bitcoincore_rpc::{Auth, Client, RpcApi, jsonrpc::serde_json::Value};
 
@@ -170,7 +181,10 @@ impl Minter {
             }
             tokio::time::sleep(DELAY_DURATION).await;
         }
-        panic!("Failed to fetch mempool fee rate after {} attempts", MAX_ATTEMPTS);
+        panic!(
+            "Failed to fetch mempool fee rate after {} attempts",
+            MAX_ATTEMPTS
+        );
     }
 
     pub async fn check_fee_rate_warning(&self, fee_rate: f64) -> bool {
@@ -205,7 +219,12 @@ impl Minter {
         balance.to_sat()
     }
 
-    pub fn calculate_fee(&self, inputs: &Vec<Utxo>, outputs: &Vec<(ScriptBuf, Amount)>, fee_rate: f64) -> u64 {
+    pub fn calculate_fee(
+        &self,
+        inputs: &Vec<Utxo>,
+        outputs: &Vec<(ScriptBuf, Amount)>,
+        fee_rate: f64,
+    ) -> u64 {
         let tx = construct_dummy_tx_from_in_outs(inputs, outputs);
         let vsize = tx.weight().to_vbytes_ceil() as f64;
         (vsize * fee_rate).ceil() as u64
@@ -254,8 +273,7 @@ impl Minter {
             fee = self.calculate_fee(&inputs, &outputs, fee_rate);
         }
         let additional_change_output_fee =
-            f64::ceil(((self.sender.script_pubkey().len() + 9) as f64) * fee_rate)
-                as u64;
+            f64::ceil(((self.sender.script_pubkey().len() + 9) as f64) * fee_rate) as u64;
         let excess = total_input_value - fee - total_target_value;
         if excess > self.dust_value + additional_change_output_fee {
             outputs.push((
@@ -317,8 +335,7 @@ impl Minter {
             output: dummy_reveal_outputs,
         };
         let dummy_reveal_tx_fee =
-            f64::ceil((dummy_reveal_tx.weight().to_vbytes_ceil() as f64) * fee_rate)
-                as u64;
+            f64::ceil((dummy_reveal_tx.weight().to_vbytes_ceil() as f64) * fee_rate) as u64;
         let total_postage = postage * (inscription_details.len() as u64);
         let total_needed = total_postage + dummy_reveal_tx_fee;
         self.build_transaction(
@@ -436,7 +453,8 @@ impl Minter {
         if postage < 330 {
             postage = 330; // minimum for p2tr output
         }
-        let mut commit_tx = self.build_commit_tx(secret, &inscription_details, postage, &utxos, fee_rate)?;
+        let mut commit_tx =
+            self.build_commit_tx(secret, &inscription_details, postage, &utxos, fee_rate)?;
         let sighash_type = EcdsaSighashType::All;
         let in_cnt = commit_tx.input.len();
         let mut utxos_to_spend: Vec<Utxo> = Vec::new();
@@ -481,7 +499,8 @@ impl Minter {
         for output in commit_tx.output.iter() {
             commit_tx_out_value += output.value.to_sat();
         }
-        let total_fee = commit_tx_in_value - commit_tx_out_value + commit_tx.output[0].value.to_sat();
+        let total_fee =
+            commit_tx_in_value - commit_tx_out_value + commit_tx.output[0].value.to_sat();
         let reveal_tx = self.build_reveal_tx(secret, &commit_tx, &inscription_details, postage);
         let send_to_op_return_inputs = vec![TxIn {
             previous_output: bitcoin::OutPoint {
@@ -543,8 +562,7 @@ impl Minter {
         if !resp.status().is_success() {
             return Err(format!("Failed to fetch UTXOs: {}", resp.status()).into());
         }
-        let mempool_space_utxos: Vec<MempoolSpaceUtxo> =
-            resp.json().await?;
+        let mempool_space_utxos: Vec<MempoolSpaceUtxo> = resp.json().await?;
         let mut utxos: Vec<Utxo> = Vec::new();
         for ms_utxo in mempool_space_utxos {
             let txid = bitcoin::Txid::from_str(&ms_utxo.txid)?;
