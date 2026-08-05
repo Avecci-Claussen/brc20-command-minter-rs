@@ -12,6 +12,12 @@ static DB_URL_KEY: &str = "DATABASE_URL";
 static DB_URL_DEFAULT: &str = "sqlite://brc20_minter.db";
 static FEE_RATE_CATEGORY_KEY: &str = "FEE_RATE_CATEGORY";
 static FEE_RATE_CATEGORY_DEFAULT: &str = "fastest";
+/// Caps BRC2.0 inscription byte length derived from EVM `gas_limit` padding.
+/// Prevents fee-drain via unbounded space padding (H-02).
+static MAX_INSCRIPTION_BYTES_KEY: &str = "MAX_INSCRIPTION_BYTES";
+/// Default 100 KiB: large enough for real deploy/call payloads, far below
+/// griefing with `gas_limit = u64::MAX` (which would request ~1.5e15 bytes).
+static MAX_INSCRIPTION_BYTES_DEFAULT: u64 = 100_000;
 
 #[derive(Debug, Clone, Copy)]
 pub enum FeeRateCategory {
@@ -44,6 +50,8 @@ pub struct Config {
     pub proxy_server_address: String, // Optional address of the proxy server
     pub db_url: String,               // Database connection URL
     pub fee_rate_category: FeeRateCategory, // Fee rate category for mempool.space API
+    /// Max inscription payload bytes after gas-based space padding (H-02).
+    pub max_inscription_bytes: u64,
 }
 
 impl Default for Config {
@@ -73,6 +81,16 @@ impl Default for Config {
             "minimum" => FeeRateCategory::Minimum,
             other => panic!("Invalid FEE_RATE_CATEGORY value: {}", other),
         };
+        let max_inscription_bytes = std::env::var(MAX_INSCRIPTION_BYTES_KEY)
+            .ok()
+            .map(|v| {
+                v.parse::<u64>()
+                    .unwrap_or_else(|_| panic!("MAX_INSCRIPTION_BYTES must be a positive integer"))
+            })
+            .unwrap_or(MAX_INSCRIPTION_BYTES_DEFAULT);
+        if max_inscription_bytes == 0 {
+            panic!("MAX_INSCRIPTION_BYTES must be greater than 0");
+        }
         Self {
             brc20_rpc_url,
             evm_address,
@@ -86,6 +104,7 @@ impl Default for Config {
             proxy_server_address,
             db_url,
             fee_rate_category,
+            max_inscription_bytes,
         }
     }
 }
