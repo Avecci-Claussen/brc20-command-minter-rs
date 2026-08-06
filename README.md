@@ -37,7 +37,8 @@ A Rust-based server for minting BRC2.0 inscriptions using an EVM wallet as a sig
     - `BITCOIN_NETWORK`: The Bitcoin network to use (e.g., `bitcoin`, `testnet`, `signet`).
     - `FEE_RATE_CATEGORY`: The fee rate category for mempool.space API. Allowed values are `fastest`, `halfHour`, `hour`, `economy`, `minimum`.
     - `PROXY_SERVER_ADDRESS`: The address and port for the server to listen on.
-    - `DB_PATH`: (Optional) Path to the SQLite database file. Defaults to `brc20_minter.db`.
+    - `DB_PATH` / `DATABASE_URL`: (Optional) SQLite URL. Defaults to `sqlite://brc20_minter.db`.
+    - `MAX_INSCRIPTION_BYTES`: (Optional) Maximum BRC2.0 inscription size in bytes after gas-based space padding. Defaults to `1000000` (1 MB, the BRC2.0 calldata ceiling). Requests whose `gas_limit` would require a larger padded inscription are **rejected** before padding or minting.
 
 > [!CAUTION]
 > **UTXO management is not inscription aware**: The server may burn the inscriptions that you've sent to the bitcoin wallet. Also those inscriptions may prevent the inscribed commands to run since re-inscriptions are not allowed on BRC20. Always use a fresh wallet with no inscriptions.
@@ -85,7 +86,7 @@ A Rust-based server for minting BRC2.0 inscriptions using an EVM wallet as a sig
 
 - `eth_getTransactionCount`: Returns the nonce for the specified EVM address, including pending transactions stored in the database.
 
-- `eth_sendRawTransaction`: Accepts a pre-signed transaction, funds it with Bitcoin, and inscribes it as a BRC2.0 transaction. If you set a high gas limit, the inscription size and total fee will increase, so estimate gas via the proxied BRC2.0 server, or choose a reasonable default.
+- `eth_sendRawTransaction`: Accepts a pre-signed transaction, funds it with Bitcoin, and inscribes it as a BRC2.0 transaction. Inscription size scales with `gas_limit` (12 000 gas ≈ 1 byte, via space padding). Sizes above `MAX_INSCRIPTION_BYTES` are rejected before broadcast. Estimate gas via the proxied BRC2.0 server, or choose a reasonable default.
 
 - `eth_accounts`: Returns an empty array to avoid confusion, as this server does not manage EVM accounts.
 
@@ -99,3 +100,4 @@ All other methods are proxied to the specified BRC2.0 server.
 - **eth_sendTransaction is not supported**: This method is not supported. Only `eth_sendRawTransaction` is implemented, as this server is not intended for signing transactions, you should pre-sign your transactions using another wallet. `eth_accounts` will return an empty array to avoid confusion.
 - **Nonce management may not work with multiple instances**: The server tracks nonces in a SQLite database. If multiple instances of the server are running with the same EVM address, nonce conflicts may occur. Ensure only one instance is managing a specific EVM address.
 - **Security!**: Always keep your Bitcoin and EVM wallets secure, they are critical to this server’s operation.
+- **Inscription size cap**: Inscription length scales with `gas_limit` via space padding. An absurd or fat-fingered `gas_limit` (e.g. `u64::MAX`) can request a huge inscription and OOM/panic during `" ".repeat`. The server enforces `MAX_INSCRIPTION_BYTES` (default 1 000 000, BRC2.0 calldata limit) and rejects oversized requests before padding or minting. Mint remains authenticated to `EVM_ADDRESS` on a trusted, non-public RPC.

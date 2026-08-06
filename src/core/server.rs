@@ -43,6 +43,7 @@ struct ServerState {
     brc20_client: HttpClient,
     chain_id: u64,
     evm_address: String,
+    max_inscription_bytes: u64,
 }
 
 impl ServerState {
@@ -76,6 +77,10 @@ impl ServerState {
         tracing::info!("Bitcoin address: {}", minter.sender);
         tracing::info!("Bitcoin network: {:?}", config.bitcoin_network);
         tracing::info!("EVM tx signer: {}", config.evm_address);
+        tracing::info!(
+            "Max inscription bytes (gas padding cap): {}",
+            config.max_inscription_bytes
+        );
 
         ServerState {
             minter,
@@ -83,6 +88,7 @@ impl ServerState {
             chain_id,
             evm_address: config.evm_address.clone(),
             database,
+            max_inscription_bytes: config.max_inscription_bytes,
         }
     }
 
@@ -139,7 +145,18 @@ impl ServerState {
             return Err("Failed to generate dummy signed transaction".into());
         };
         // Finally, convert it to a BRC20 inscription and calculate the estimated fee in satoshis
-        let inscription = convert_to_brc20_inscription(&dummy_tx, estimated_gas);
+        let inscription =
+            match convert_to_brc20_inscription(&dummy_tx, estimated_gas, self.max_inscription_bytes)
+            {
+                Ok(inscription) => inscription,
+                Err(err) => {
+                    return Err(format!(
+                        "Failed to create BRC20 inscription for fee estimation: {}",
+                        err
+                    )
+                    .into());
+                }
+            };
         let total_fee = match self.minter.estimate(&inscription).await {
             Ok(total_fee) => total_fee,
             Err(err) => {
@@ -209,8 +226,18 @@ impl ServerState {
             );
         }
 
-        // Convert the signed Ethereum transaction to a BRC20 inscription
-        let inscription = convert_to_brc20_inscription(&signed_eth_tx, tx.gas_limit);
+        // Convert the signed Ethereum transaction to a BRC20 inscription.
+        // Reject absurd/fat-fingered gas_limit padding before mint construction.
+        let inscription = match convert_to_brc20_inscription(
+            signed_eth_tx,
+            tx.gas_limit,
+            self.max_inscription_bytes,
+        ) {
+            Ok(inscription) => inscription,
+            Err(err) => {
+                return Err(format!("Refusing to mint: {}", err).into());
+            }
+        };
         let mint_result = match self.minter.mint(&inscription, fee_rate).await {
             Ok(res) => res,
             Err(err) => return Err(format!("Failed to mint BRC20 inscription: {}", err).into()),
