@@ -42,17 +42,14 @@ pub const GAS_PER_BYTE: u64 = 12_000;
 
 /// Bytes of inscription payload implied by an EVM gas budget (including +1).
 pub fn inscription_bytes_for_gas(estimated_gas: u64) -> u64 {
-    estimated_gas
-        .checked_div(GAS_PER_BYTE)
-        .unwrap_or(0)
-        .saturating_add(1)
+    (estimated_gas / GAS_PER_BYTE).saturating_add(1)
 }
 
 /// Convert a pre-signed EVM tx into a BRC2.0 `brc20-prog` inscription, padding
 /// with spaces so inscription length matches the gas budget.
 ///
 /// Returns `Err` if the required (or unpadded) size exceeds `max_inscription_bytes`.
-/// This is fail-closed: we never allocate unbounded padding (H-02 fee drain / OOM).
+/// Fail-closed input hardening: never allocate unbounded space padding from gas_limit.
 pub fn convert_to_brc20_inscription(
     pre_signed_eth_tx: &str,
     estimated_gas: u64,
@@ -106,21 +103,23 @@ mod tests {
     const SAMPLE_TX: &str =
         "0xf86c8008504a817c80082520894b60e8dd61c5d32be8058bb8eb970870f072331550880de0b6b3a76400008025a0b4c9";
 
+    const DEFAULT_CAP: u64 = 1_000_000;
+
     #[test]
     fn test_convert_to_brc20_inscription() {
         let estimated_gas = 5_000_000;
         let inscription =
-            convert_to_brc20_inscription(SAMPLE_TX, estimated_gas, 100_000).expect("ok");
+            convert_to_brc20_inscription(SAMPLE_TX, estimated_gas, DEFAULT_CAP).expect("ok");
         assert!(inscription.starts_with(r#"{"p":"brc20-prog","op":"t","b":"#));
         assert!(inscription.len() >= (estimated_gas / GAS_PER_BYTE) as usize);
-        assert!(inscription.len() as u64 <= 100_000);
+        assert!(inscription.len() as u64 <= DEFAULT_CAP);
     }
 
     #[test]
     fn test_rejects_gas_limit_padding_above_cap() {
-        // gas that requests ~1_000_001 bytes of inscription → over 100_000 cap
-        let gas = 100_000 * GAS_PER_BYTE + GAS_PER_BYTE; // => 100_001 bytes required
-        let err = convert_to_brc20_inscription(SAMPLE_TX, gas, 100_000).unwrap_err();
+        // gas that requests ~1_000_001 bytes of inscription → over 1 MB default ceiling
+        let gas = DEFAULT_CAP * GAS_PER_BYTE + GAS_PER_BYTE; // => 1_000_001 bytes required
+        let err = convert_to_brc20_inscription(SAMPLE_TX, gas, DEFAULT_CAP).unwrap_err();
         assert!(
             err.contains("MAX_INSCRIPTION_BYTES"),
             "unexpected error: {err}"
@@ -130,10 +129,20 @@ mod tests {
     #[test]
     fn test_rejects_u64_max_gas_without_allocating() {
         // Must fail closed before `" ".repeat(...)` (would OOM / panic otherwise).
-        let err = convert_to_brc20_inscription(SAMPLE_TX, u64::MAX, 100_000).unwrap_err();
+        let err = convert_to_brc20_inscription(SAMPLE_TX, u64::MAX, DEFAULT_CAP).unwrap_err();
         assert!(err.contains("exceeds MAX_INSCRIPTION_BYTES"));
         let required = inscription_bytes_for_gas(u64::MAX);
-        assert!(required > 100_000);
+        assert!(required > DEFAULT_CAP);
+    }
+
+    #[test]
+    fn test_allows_near_1mb_calldata_ceiling() {
+        // Production-scale: just under the 1 MB BRC2.0 calldata ceiling.
+        let cap = DEFAULT_CAP;
+        let gas = (cap - 1) * GAS_PER_BYTE;
+        assert_eq!(inscription_bytes_for_gas(gas), cap);
+        let inscription = convert_to_brc20_inscription(SAMPLE_TX, gas, cap).expect("at 1MB");
+        assert_eq!(inscription.len() as u64, cap);
     }
 
     #[test]

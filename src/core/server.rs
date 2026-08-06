@@ -227,7 +227,7 @@ impl ServerState {
         }
 
         // Convert the signed Ethereum transaction to a BRC20 inscription.
-        // Fail closed on oversized gas_limit padding (H-02) before spending BTC.
+        // Reject absurd/fat-fingered gas_limit padding before mint construction.
         let inscription = match convert_to_brc20_inscription(
             signed_eth_tx,
             tx.gas_limit,
