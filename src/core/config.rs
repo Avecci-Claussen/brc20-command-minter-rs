@@ -18,6 +18,12 @@ static MAX_INSCRIPTION_BYTES_KEY: &str = "MAX_INSCRIPTION_BYTES";
 /// Default 1 MB: BRC2.0 calldata limit (real usage ceiling). Still far below
 /// `gas_limit = u64::MAX`, which would request ~1.5e15 bytes and OOM/panic.
 static MAX_INSCRIPTION_BYTES_DEFAULT: u64 = 1_000_000;
+/// Optional Bearer token for JSON-RPC requests when set.
+static RPC_AUTH_TOKEN_KEY: &str = "RPC_AUTH_TOKEN";
+/// Allow non-loopback bind without `RPC_AUTH_TOKEN`.
+static ALLOW_REMOTE_BIND_KEY: &str = "ALLOW_REMOTE_BIND";
+/// Optional CORS origin (`*` or one origin). Unset = no CORS layer.
+static CORS_ALLOW_ORIGIN_KEY: &str = "CORS_ALLOW_ORIGIN";
 
 #[derive(Debug, Clone, Copy)]
 pub enum FeeRateCategory {
@@ -52,6 +58,12 @@ pub struct Config {
     pub fee_rate_category: FeeRateCategory, // Fee rate category for mempool.space API
     /// Max inscription payload bytes after gas-based space padding.
     pub max_inscription_bytes: u64,
+    /// When set, require `Authorization: Bearer <token>` on requests.
+    pub rpc_auth_token: Option<String>,
+    /// Allow non-loopback bind without `RPC_AUTH_TOKEN`.
+    pub allow_remote_bind: bool,
+    /// Optional CORS origin (`*` or one origin).
+    pub cors_allow_origin: Option<String>,
 }
 
 impl Default for Config {
@@ -91,6 +103,21 @@ impl Default for Config {
         if max_inscription_bytes == 0 {
             panic!("MAX_INSCRIPTION_BYTES must be greater than 0");
         }
+        let rpc_auth_token = std::env::var(RPC_AUTH_TOKEN_KEY)
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let allow_remote_bind = match std::env::var(ALLOW_REMOTE_BIND_KEY) {
+            Ok(v) => matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            ),
+            Err(_) => false,
+        };
+        let cors_allow_origin = std::env::var(CORS_ALLOW_ORIGIN_KEY)
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
         Self {
             brc20_rpc_url,
             evm_address,
@@ -105,6 +132,9 @@ impl Default for Config {
             db_url,
             fee_rate_category,
             max_inscription_bytes,
+            rpc_auth_token,
+            allow_remote_bind,
+            cors_allow_origin,
         }
     }
 }

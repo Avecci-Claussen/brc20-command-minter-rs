@@ -282,16 +282,6 @@ pub async fn reset(config: &Config) {
 }
 
 pub async fn start(config: &Config) {
-    let cors = CorsLayer::new().allow_origin(Any).allow_headers(Any); // Allow all origins (open policy)
-
-    let app = Router::new()
-        .route("/", post(handler))
-        .with_state((
-            Arc::new(Mutex::new(ServerState::new(&config).await)),
-            config.brc20_rpc_url.clone(),
-        ))
-        .layer(cors);
-
     let addr: SocketAddr = config.proxy_server_address.parse().expect(
         format!(
             "Invalid server address format: {}",
@@ -299,6 +289,39 @@ pub async fn start(config: &Config) {
         )
         .as_str(),
     );
+    validate_bind_policy(&addr, config);
+
+    let mut app = Router::new()
+        .route("/", post(handler))
+        .with_state((
+            Arc::new(Mutex::new(ServerState::new(config).await)),
+            config.brc20_rpc_url.clone(),
+            config.rpc_auth_token.clone(),
+        ));
+
+    if let Some(origin) = &config.cors_allow_origin {
+        let cors = if origin == "*" {
+            tracing::info!("CORS_ALLOW_ORIGIN=*");
+            CorsLayer::new().allow_origin(Any).allow_headers(Any)
+        } else {
+            let value = HeaderValue::from_str(origin).unwrap_or_else(|_| {
+                panic!(
+                    "CORS_ALLOW_ORIGIN must be a valid header value (got {:?})",
+                    origin
+                )
+            });
+            CorsLayer::new()
+                .allow_origin(value)
+                .allow_headers(Any)
+        };
+        app = app.layer(cors);
+        tracing::info!("CORS allow origin: {}", origin);
+    }
+
+    if config.rpc_auth_token.is_some() {
+        tracing::info!("RPC_AUTH_TOKEN is set; Bearer auth required");
+    }
+
     tracing::info!("RPC server listening on {}", addr);
     axum_server::bind(addr)
         .serve(app.into_make_service())
@@ -306,12 +329,72 @@ pub async fn start(config: &Config) {
         .expect("Failed to start server");
 }
 
+fn validate_bind_policy(addr: &SocketAddr, config: &Config) {
+    if addr.ip().is_loopback() {
+        return;
+    }
+    if config.rpc_auth_token.is_some() {
+        tracing::info!("Listening on non-loopback address {} with RPC_AUTH_TOKEN", addr);
+        return;
+    }
+    if config.allow_remote_bind {
+        tracing::warn!(
+            "Listening on non-loopback address {} with ALLOW_REMOTE_BIND=true and no RPC_AUTH_TOKEN",
+            addr
+        );
+        return;
+    }
+    panic!(
+        "PROXY_SERVER_ADDRESS {} is not loopback. Set RPC_AUTH_TOKEN, bind 127.0.0.1, \
+         or set ALLOW_REMOTE_BIND=true if access control is handled elsewhere.",
+        addr
+    );
+}
+
+fn unauthorized_response() -> Response {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "error": { "code": -32001, "message": "Unauthorized" },
+        "id": null
+    });
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header("Content-Type", "application/json")
+        .body(serde_json::to_vec(&body).unwrap().into())
+        .expect("Failed to create unauthorized response")
+}
+
+fn check_rpc_auth(headers: &HeaderMap, expected: &Option<String>) -> Result<(), Response> {
+    let Some(token) = expected else {
+        return Ok(());
+    };
+    let Some(header) = headers
+        .get(http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return Err(unauthorized_response());
+    };
+    let expected_header = format!("Bearer {}", token);
+    if header == expected_header {
+        Ok(())
+    } else {
+        Err(unauthorized_response())
+    }
+}
+
 async fn handler(
-    State((server, brc20_rpc_url)): State<(Arc<Mutex<ServerState>>, String)>,
+    State((server, brc20_rpc_url, rpc_auth_token)): State<(
+        Arc<Mutex<ServerState>>,
+        String,
+        Option<String>,
+    )>,
     OriginalUri(_): OriginalUri,
     req: Request,
 ) -> Response {
     let headers = req.headers().clone();
+    if let Err(response) = check_rpc_auth(&headers, &rpc_auth_token) {
+        return response;
+    }
     let body = req.into_body();
 
     let body = match axum::body::to_bytes(body, usize::MAX).await {
@@ -512,11 +595,107 @@ async fn handle_single_request(
 }
 
 fn drop_accept_encoding(mut headers: HeaderMap) -> HeaderMap {
-    // remove accept-encoding header in case insensitively
-    let remove_keys = vec!["accept-encoding", "host"];
+    // Drop hop / client auth headers before proxying to BRC20_RPC_URL.
+    let remove_keys = vec!["accept-encoding", "host", "authorization"];
     for key in remove_keys {
         headers.remove(key);
     }
     headers.append("Accept-Encoding", HeaderValue::from_static("identity"));
     headers
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::HeaderValue;
+
+    #[test]
+    fn auth_skipped_when_token_unset() {
+        let headers = HeaderMap::new();
+        assert!(check_rpc_auth(&headers, &None).is_ok());
+    }
+
+    #[test]
+    fn auth_rejects_missing_header() {
+        let headers = HeaderMap::new();
+        assert!(check_rpc_auth(&headers, &Some("secret".into())).is_err());
+    }
+
+    #[test]
+    fn auth_accepts_bearer_token() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer secret"),
+        );
+        assert!(check_rpc_auth(&headers, &Some("secret".into())).is_ok());
+    }
+
+    #[test]
+    fn auth_rejects_wrong_token() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer wrong"),
+        );
+        assert!(check_rpc_auth(&headers, &Some("secret".into())).is_err());
+    }
+
+    #[test]
+    fn proxy_header_strip_removes_authorization() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer secret"),
+        );
+        headers.insert(http::header::HOST, HeaderValue::from_static("evil.example"));
+        let cleaned = drop_accept_encoding(headers);
+        assert!(cleaned.get(http::header::AUTHORIZATION).is_none());
+        assert!(cleaned.get(http::header::HOST).is_none());
+    }
+
+    #[test]
+    fn loopback_bind_allowed_without_token() {
+        let config = Config {
+            evm_address: "0x0".into(),
+            secret: "00".repeat(32),
+            brc20_rpc_url: "http://127.0.0.1:1".into(),
+            bitcoin_rpc_url: "http://127.0.0.1:1".into(),
+            bitcoin_rpc_user: "u".into(),
+            bitcoin_rpc_password: "p".into(),
+            bitcoin_network: bitcoin::Network::Regtest,
+            proxy_server_address: "127.0.0.1:8545".into(),
+            db_url: "sqlite://:memory:".into(),
+            fee_rate_category: crate::core::config::FeeRateCategory::Fastest,
+            max_inscription_bytes: 1_000_000,
+            rpc_auth_token: None,
+            allow_remote_bind: false,
+            cors_allow_origin: None,
+        };
+        let addr: SocketAddr = "127.0.0.1:8545".parse().unwrap();
+        validate_bind_policy(&addr, &config);
+    }
+
+    #[test]
+    #[should_panic(expected = "is not loopback")]
+    fn non_loopback_without_token_panics() {
+        let config = Config {
+            evm_address: "0x0".into(),
+            secret: "00".repeat(32),
+            brc20_rpc_url: "http://127.0.0.1:1".into(),
+            bitcoin_rpc_url: "http://127.0.0.1:1".into(),
+            bitcoin_rpc_user: "u".into(),
+            bitcoin_rpc_password: "p".into(),
+            bitcoin_network: bitcoin::Network::Regtest,
+            proxy_server_address: "0.0.0.0:8545".into(),
+            db_url: "sqlite://:memory:".into(),
+            fee_rate_category: crate::core::config::FeeRateCategory::Fastest,
+            max_inscription_bytes: 1_000_000,
+            rpc_auth_token: None,
+            allow_remote_bind: false,
+            cors_allow_origin: None,
+        };
+        let addr: SocketAddr = "0.0.0.0:8545".parse().unwrap();
+        validate_bind_policy(&addr, &config);
+    }
 }

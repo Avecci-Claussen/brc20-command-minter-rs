@@ -36,9 +36,12 @@ A Rust-based server for minting BRC2.0 inscriptions using an EVM wallet as a sig
     - `BITCOIN_RPC_PASSWORD`: The RPC password for your Bitcoin node.
     - `BITCOIN_NETWORK`: The Bitcoin network to use (e.g., `bitcoin`, `testnet`, `signet`).
     - `FEE_RATE_CATEGORY`: The fee rate category for mempool.space API. Allowed values are `fastest`, `halfHour`, `hour`, `economy`, `minimum`.
-    - `PROXY_SERVER_ADDRESS`: The address and port for the server to listen on.
+    - `PROXY_SERVER_ADDRESS`: Address and port to listen on (sample: `127.0.0.1:8545`). Non-loopback binds require `RPC_AUTH_TOKEN`, or `ALLOW_REMOTE_BIND=true`.
     - `DB_PATH` / `DATABASE_URL`: (Optional) SQLite URL. Defaults to `sqlite://brc20_minter.db`.
     - `MAX_INSCRIPTION_BYTES`: (Optional) Maximum BRC2.0 inscription size in bytes after gas-based space padding. Defaults to `1000000` (1 MB, the BRC2.0 calldata ceiling). Requests whose `gas_limit` would require a larger padded inscription are **rejected** before padding or minting.
+    - `RPC_AUTH_TOKEN`: (Optional) When set, require `Authorization: Bearer <token>` on requests. Required for non-loopback binds unless `ALLOW_REMOTE_BIND=true`.
+    - `ALLOW_REMOTE_BIND`: (Optional) Allow a non-loopback bind without `RPC_AUTH_TOKEN`.
+    - `CORS_ALLOW_ORIGIN`: (Optional) Enable CORS (`*` or one origin). Unset leaves CORS off.
 
 > [!CAUTION]
 > **UTXO management is not inscription aware**: The server may burn the inscriptions that you've sent to the bitcoin wallet. Also those inscriptions may prevent the inscribed commands to run since re-inscriptions are not allowed on BRC20. Always use a fresh wallet with no inscriptions.
@@ -100,4 +103,5 @@ All other methods are proxied to the specified BRC2.0 server.
 - **eth_sendTransaction is not supported**: This method is not supported. Only `eth_sendRawTransaction` is implemented, as this server is not intended for signing transactions, you should pre-sign your transactions using another wallet. `eth_accounts` will return an empty array to avoid confusion.
 - **Nonce management may not work with multiple instances**: The server tracks nonces in a SQLite database. If multiple instances of the server are running with the same EVM address, nonce conflicts may occur. Ensure only one instance is managing a specific EVM address.
 - **Security!**: Always keep your Bitcoin and EVM wallets secure, they are critical to this server’s operation.
+- **Bind address / RPC auth**: Prefer `PROXY_SERVER_ADDRESS=127.0.0.1:…`. Non-loopback binds require `RPC_AUTH_TOKEN`, or `ALLOW_REMOTE_BIND=true`. Mint still requires a signature from `EVM_ADDRESS`. CORS is off unless `CORS_ALLOW_ORIGIN` is set.
 - **Inscription size cap**: Inscription length scales with `gas_limit` via space padding. An absurd or fat-fingered `gas_limit` (e.g. `u64::MAX`) can request a huge inscription and OOM/panic during `" ".repeat`. The server enforces `MAX_INSCRIPTION_BYTES` (default 1 000 000, BRC2.0 calldata limit) and rejects oversized requests before padding or minting. Mint remains authenticated to `EVM_ADDRESS` on a trusted, non-public RPC.
